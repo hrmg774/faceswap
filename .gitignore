@@ -1,0 +1,14 @@
+# Môi trường ảo Python
+.venv/
+__pycache__/
+*.pyc
+
+# Bỏ qua dữ liệu đầu vào và kết quả của dự án faceswap (Nặng và riêng tư)
+input_face/
+input_data/
+output/
+temp/
+
+# IDE và cấu hình
+.vscode/
+.idea/
