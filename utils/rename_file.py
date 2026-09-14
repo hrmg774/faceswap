@@ -8,121 +8,65 @@ import time
 TZ_HANOI = timezone(timedelta(hours=7))
 
 
-def rename_file(old_name, new_name):
-    old_name = Path(old_name)
-    new_name = Path(new_name)
+def _is_formatted(stem: str, prefix: str) -> bool:
+    return bool(re.match(rf'^{re.escape(prefix)}_\d{{8}}_\d{{6}}_\d{{2}}$', stem))
 
-    if old_name.exists():
-        old_name.rename(new_name)
-        print(f"Rename {old_name.name} to {new_name.name} successfully!")
-        return True
-    else:
-        print(f"File {old_name.name} not found!")
-        return False
+
+def _unique_path(folder: Path, prefix: str, time_str: str, ext: str) -> Path:
+    counter = 1
+    while True:
+        candidate = folder / f'{prefix}_{time_str}_{counter:02d}{ext}'
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def _pending_files(folder: Path) -> list:
+    prefix = folder.name
+    return sorted(
+        [f for f in folder.iterdir()
+         if f.is_file()
+         and not _is_formatted(f.stem, prefix)],
+        key=lambda x: x.stat().st_mtime,
+    )
 
 
 def rename_by_current_time(folder_path):
-    # Doi ten theo gio hien tai luc bam chay code
     folder = Path(folder_path)
     if not folder.exists():
-        print(f"Folder not found: {folder_path}")
         return
-
     prefix = folder.name
-    
-    # Sắp xếp file theo thời gian chỉnh sửa (mtime) từ cũ nhất đến mới nhất
-    # File nào được cho vào folder trước sẽ đứng trước
-    all_files = sorted(
-        [f for f in folder.iterdir() if f.is_file()],
-        key=lambda x: x.stat().st_mtime
-    )
-
-    pattern = rf"^{re.escape(prefix)}_\d{{8}}_\d{{6}}_\d{{2}}$"
-
-    files_to_rename = []
-    for f in all_files:
-        if re.match(pattern, f.stem):
-            continue
-        files_to_rename.append(f)
-
-    if not files_to_rename:
-        print(f"All files in '{prefix}' are already formatted!")
-        return
-
-    print(
-        f"Found {len(all_files)} files total. Renaming {len(files_to_rename)} files by current time..."
-    )
-
-    for file_goc in files_to_rename:
-        dt_now = datetime.now(TZ_HANOI)
-        time_str = dt_now.strftime("%Y%m%d_%H%M%S")
-        duoi_file = file_goc.suffix.lower()
-
-        counter = 1
-        while True:
-            stem_candidate = f"{prefix}_{time_str}_{counter:02d}"
-            
-            if not any(folder.glob(f"{stem_candidate}.*")):
-                new_name_str = f"{folder}/{stem_candidate}{duoi_file}"
-                break
-            counter += 1
-
-        rename_file(str(file_goc), new_name_str)
+    for f in _pending_files(folder):
+        time_str = datetime.now(TZ_HANOI).strftime('%Y%m%d_%H%M%S')
+        f.rename(_unique_path(folder, prefix, time_str, f.suffix.lower()))
         time.sleep(0.01)
-
-    print("Successfully synced new files to current rename time!")
 
 
 def rename_by_history(folder_path):
-    # Doi ten dua theo lich su file luc tao hoac tai ve
     folder = Path(folder_path)
     if not folder.exists():
-        print(f"Folder not found: {folder_path}")
         return
-
     prefix = folder.name
-    
-    # Sắp xếp file theo thời gian chỉnh sửa (mtime) từ cũ nhất đến mới nhất
-    # File nào được cho vào folder trước sẽ đứng trước
-    all_files = sorted(
-        [f for f in folder.iterdir() if f.is_file()],
-        key=lambda x: x.stat().st_mtime
-    )
 
-    pattern = rf"^{re.escape(prefix)}_\d{{8}}_\d{{6}}_\d{{2}}$"
-
-    files_to_rename = []
-    for f in all_files:
-        if re.match(pattern, f.stem):
-            continue
-        files_to_rename.append(f)
-
-    if not files_to_rename:
-        print(f"All files in '{prefix}' are already formatted!")
+    files = [(f, f.stat().st_mtime)
+             for f in sorted(folder.iterdir(), key=lambda x: x.stat().st_mtime)
+             if f.is_file()]
+    if not files:
         return
 
-    print(
-        f"Found {len(all_files)} files total. Renaming {len(files_to_rename)} files by file age..."
-    )
+    # Pass 1: rename to temp to free all existing name slots
+    temp_files = []
+    for i, (f, mtime) in enumerate(files):
+        tmp = folder / f'__tmp_{i:04d}{f.suffix}'
+        f.rename(tmp)
+        temp_files.append((tmp, mtime))
 
-    for file_goc in files_to_rename:
-        timestamp = file_goc.stat().st_mtime
-        dt_vn = datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone(
-            TZ_HANOI
-        )
-
-        time_str = dt_vn.strftime("%Y%m%d_%H%M%S")
-        duoi_file = file_goc.suffix.lower()
-
-        counter = 1
-        while True:
-            stem_candidate = f"{prefix}_{time_str}_{counter:02d}"
-            
-            if not any(folder.glob(f"{stem_candidate}.*")):
-                new_name_str = f"{folder}/{stem_candidate}{duoi_file}"
-                break
-            counter += 1
-
-        rename_file(str(file_goc), new_name_str)
-
-    print(f"Synced all new files in '{prefix}' successfully!")
+    # Pass 2: rename to final names, counter resets from _01 per timestamp
+    counters = {}
+    for tmp, mtime in temp_files:
+        dt = datetime.fromtimestamp(mtime, tz=TZ_HANOI)
+        time_str = dt.strftime('%Y%m%d_%H%M%S')
+        counters[time_str] = counters.get(time_str, 0) + 1
+        final = folder / \
+            f'{prefix}_{time_str}_{counters[time_str]:02d}{tmp.suffix.lower()}'
+        tmp.rename(final)
