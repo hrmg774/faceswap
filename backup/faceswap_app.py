@@ -7,146 +7,126 @@ import random as _random
 import insightface
 from insightface.app import FaceAnalysis
 from utils.rename_file import rename_by_current_time
+from utils.delete_file import clear_all_files
 
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
-
 
 try:
     import nvidia.cudnn
     import nvidia.cuda_runtime
-
     os.add_dll_directory(os.path.join(nvidia.cudnn.__path__[0], "bin"))
     os.add_dll_directory(os.path.join(nvidia.cuda_runtime.__path__[0], "bin"))
 except Exception:
     pass
 
-model_path = r"models\inswapper_128.onnx"
-codeformer_dir = "CodeFormer"
-output_dir = "output"
+MODEL_PATH = r"models\inswapper_128.onnx"
+CODEFORMER = "CodeFormer"
+OUTPUT_DIR = "output"
+FINAL_DIR = os.path.join(OUTPUT_DIR, "final_results")
+CROPPED_DIR = os.path.join(OUTPUT_DIR, "cropped_faces")
+RESTORED_DIR = os.path.join(OUTPUT_DIR, "restored_faces")
+TEMP_DIR = "temp"
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
-os.makedirs(output_dir, exist_ok=True)
-os.makedirs("temp", exist_ok=True)
+for d in (FINAL_DIR, TEMP_DIR):
+    os.makedirs(d, exist_ok=True)
 
-# Khởi tạo mô hình một lần khi chạy app để tăng tốc quá trình bấm nút
-print("Đang nạp mô hình FaceAnalysis...")
-try:
-    app = FaceAnalysis(
-        name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+app = FaceAnalysis(name="buffalo_l", providers=[
+                   "CUDAExecutionProvider", "CPUExecutionProvider"])
+app.prepare(ctx_id=0, det_size=(640, 640))
+
+swapper = insightface.model_zoo.get_model(
+    MODEL_PATH, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+
+
+# ─── FaceSwap ────────────────────────────────────────────────────────────────
+def _swap_faces(src_path, tgt_path):
+    src_img = cv2.imread(src_path)
+    tgt_img = cv2.imread(tgt_path)
+    src_faces = app.get(src_img)
+    tgt_faces = app.get(tgt_img)
+    if not src_faces:
+        raise ValueError("No face found in input_face")
+    if not tgt_faces:
+        raise ValueError("No face found in input_data")
+    result = tgt_img.copy()
+    for face in tgt_faces:
+        result = swapper.get(result, face, src_faces[0], paste_back=True)
+    return result
+
+
+def _run_codeformer(img_path):
+    cmd = (
+        f'cd {CODEFORMER} && "{sys.executable}" inference_codeformer.py '
+        f'-w 0.5 -i "../{img_path}" -o "../{OUTPUT_DIR}" --face_upsample'
     )
-    app.prepare(ctx_id=0, det_size=(640, 640))
-except Exception as e:
-    print(f"Không thể khởi tạo FaceAnalysis: {e}")
-
-print("Đang nạp mô hình inswapper...")
-try:
-    swapper = insightface.model_zoo.get_model(
-        model_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
-    )
-except Exception as e:
-    print(f"Không thể khởi tạo Inswapper: {e}")
+    subprocess.run(cmd, shell=True, check=True)
 
 
-# ─── Hàm xử lý FaceSwap ──────────────────────────────────────────────────────
+def _post_process():
+    rename_by_current_time(FINAL_DIR)
+    rename_by_current_time(RESTORED_DIR)
+    clear_all_files(CROPPED_DIR)
+
+
+def _latest_image(folder):
+    files = [os.path.join(folder, f) for f in os.listdir(
+        folder) if f.lower().endswith(IMAGE_EXTS)]
+    return max(files, key=os.path.getmtime) if files else None
+
+
 def process_faceswap(source_img_path, target_img_path):
     if not source_img_path or not target_img_path:
-        return None, "⚠️ Vui lòng chọn cả ảnh nguồn và ảnh đích!"
-
-    if not os.path.exists(model_path):
-        return None, f"❌ Không tìm thấy mô hình: {model_path}"
-
+        return None
     try:
-        src_img = cv2.imread(source_img_path)
-        tgt_img = cv2.imread(target_img_path)
+        result = _swap_faces(source_img_path, target_img_path)
 
-        src_faces = app.get(src_img)
-        tgt_faces = app.get(tgt_img)
+        temp_path = os.path.join(TEMP_DIR, "temp_swap.png")
+        cv2.imwrite(temp_path, result)
 
-        if len(src_faces) == 0:
-            return None, "❌ Lỗi: Không tìm thấy khuôn mặt trong ảnh Nguồn"
-        if len(tgt_faces) == 0:
-            return None, "❌ Lỗi: Không tìm thấy khuôn mặt trong ảnh Đích"
-
-        source_face = src_faces[0]
-        result_swap = tgt_img.copy()
-
-        for face in tgt_faces:
-            result_swap = swapper.get(
-                result_swap, face, source_face, paste_back=True)
-
-        temp_swap_path = os.path.join("temp", "temp_swap_result.png")
-        cv2.imwrite(temp_swap_path, result_swap)
-
-        input_for_codeformer = f"../{temp_swap_path}"
-        output_for_codeformer = f"../{output_dir}"
-
-        cmd = f'cd {codeformer_dir} && "{sys.executable}" inference_codeformer.py -w 0.5 -i "{input_for_codeformer}" -o "{output_for_codeformer}" --face_upsample'
-        subprocess.run(cmd, shell=True, check=True)
-
-        final_results_dir = os.path.join(output_dir, "final_results")
-        rename_by_current_time(final_results_dir)
-
-        files = [
-            os.path.join(final_results_dir, f)
-            for f in os.listdir(final_results_dir)
-            if f.endswith((".png", ".jpg", ".jpeg"))
-        ]
-        if not files:
-            return None, "❌ Lỗi: CodeFormer không sinh ra ảnh kết quả"
-
-        latest_file = max(files, key=os.path.getmtime)
+        _run_codeformer(temp_path)
+        _post_process()
 
         try:
-            os.remove(temp_swap_path)
+            os.remove(temp_path)
         except Exception:
             pass
 
-        return latest_file, "✅ Thành công! Ảnh đã được lưu trong thư mục output."
+        return _latest_image(FINAL_DIR)
 
-    except Exception as e:
-        return None, f"❌ Lỗi trong quá trình xử lý: {str(e)}"
-
-
-# ─── Hàm xử lý Bộ sưu tập ────────────────────────────────────────────────────
-IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+    except Exception:
+        return None
 
 
-def load_gallery_images(folder_path: str):
-    """Quét thư mục và trả về danh sách đường dẫn ảnh."""
-    if not folder_path or not os.path.isdir(folder_path):
-        return [], "⚠️ Đường dẫn không hợp lệ hoặc không tồn tại!", None
-    files = sorted(
-        [
-            os.path.join(folder_path, f)
-            for f in os.listdir(folder_path)
-            if f.lower().endswith(IMAGE_EXTS)
-        ]
-    )
+# ─── Gallery ─────────────────────────────────────────────────────────────────
+def load_gallery():
+    if not os.path.isdir(FINAL_DIR):
+        return [], 0, None, ""
+    files = sorted([
+        os.path.join(FINAL_DIR, f)
+        for f in os.listdir(FINAL_DIR)
+        if f.lower().endswith(IMAGE_EXTS)
+    ])
     if not files:
-        return [], "⚠️ Không tìm thấy ảnh nào trong thư mục!", None
-    return files, f"✅ Tìm thấy {len(files)} ảnh.", files[0]
+        return [], 0, None, ""
+    return files, 0, files[0], os.path.basename(files[0])
 
 
-def gallery_navigate(files, current_idx, direction, shuffle_on):
-    """Điều hướng ảnh: tiếp theo / trước đó / ngẫu nhiên."""
+def gallery_navigate(files, idx, direction, shuffle_on):
     if not files:
-        return current_idx, None
+        return idx, None, ""
     n = len(files)
-    if shuffle_on:
-        new_idx = _random.randint(0, n - 1)
-    else:
-        new_idx = (current_idx + direction) % n
-    return new_idx, files[new_idx]
+    new_idx = _random.randint(
+        0, n - 1) if shuffle_on else (idx + direction) % n
+    return new_idx, files[new_idx], os.path.basename(files[new_idx])
 
 
-def gallery_autoplay_next(files, current_idx, shuffle_on):
-    """Hàm được Timer gọi để tự động chuyển ảnh."""
-    return gallery_navigate(files, current_idx, 1, shuffle_on)
+def gallery_tick(files, idx, shuffle_on):
+    return gallery_navigate(files, idx, 1, shuffle_on)
 
 
-# ─── Xây dựng giao diện Web (Gradio) ─────────────────────────────────────────
-
+# ─── UI ───────────────────────────────────────────────────────────────────────
 with gr.Blocks() as demo:
-
     with gr.Tabs():
 
         with gr.TabItem("FaceSwap"):
@@ -154,29 +134,17 @@ with gr.Blocks() as demo:
                 with gr.Column(scale=7):
                     output_image = gr.Image(
                         type="filepath",
-                        label="Out Put",
+                        label="Output",
                         interactive=False,
                         height=500,
                     )
                 with gr.Column(scale=3):
                     input_face = gr.Image(
-                        type="filepath",
-                        label="Input Face",
-                        height=250,
-                        sources=["upload"],
-                    )
+                        type="filepath", label="Input Face", height=250, sources=["upload"])
                     input_data = gr.Image(
-                        type="filepath",
-                        label="Input Data",
-                        height=250,
-                        sources=["upload"],
-                    )
+                        type="filepath", label="Input Data", height=250, sources=["upload"])
                     run_btn = gr.Button(
-                        "SwapFace",
-                        variant="primary",
-                        size="lg",
-                        elem_id="run-btn",
-                    )
+                        "SwapFace", variant="primary", size="lg", elem_id="run-btn")
 
             run_btn.click(
                 fn=process_faceswap,
@@ -185,7 +153,6 @@ with gr.Blocks() as demo:
             )
 
         with gr.TabItem("Gallery"):
-
             gallery_files = gr.State([])
             gallery_idx = gr.State(0)
 
@@ -197,81 +164,54 @@ with gr.Blocks() as demo:
                         interactive=False,
                         height=500,
                     )
+                    img_label = gr.Textbox(
+                        interactive=False, show_label=False, container=False)
                 with gr.Column(scale=3):
-                    folder_input = gr.Textbox(
-                        label="Đường dẫn thư mục ảnh",
-                        placeholder="VD: C:/Users/h1oo7/Desktop/hrmg774/faceswap/output/final_results",
-                        scale=1,
-                    )
-                    load_btn = gr.Button(
-                        "Tải thư mục", variant="secondary", scale=1
-                    )
+                    load_btn = gr.Button("Load", variant="secondary")
                     with gr.Row():
-                        prev_btn = gr.Button("⬅️ Trước", size="lg", scale=1)
-                        next_btn = gr.Button("Tiếp ➡️", size="lg", scale=1)
+                        prev_btn = gr.Button("⬅️ Prev", size="lg")
+                        next_btn = gr.Button("Next ➡️", size="lg")
                     with gr.Row():
                         shuffle_chk = gr.Checkbox(
-                            label="🔀 Ngẫu nhiên", value=False, scale=1
-                        )
+                            label="🔀 Shuffle", value=False)
                         autoplay_chk = gr.Checkbox(
-                            label="▶️ Tự động phát", value=False, scale=1
-                        )
+                            label="▶️ Autoplay", value=False)
                     interval_sl = gr.Slider(
-                        minimum=1,
-                        maximum=10,
-                        value=3,
-                        step=0.5,
-                        label="Tốc độ (giây / ảnh)",
-                        scale=2,
-                    )
+                        minimum=1, maximum=10, value=3, step=0.5, label="Speed (sec/img)")
 
-            # Tải ảnh từ thư mục
             load_btn.click(
-                fn=load_gallery_images,
-                inputs=[folder_input],
-                outputs=[gallery_files, gallery_img],
-            ).then(fn=lambda: 0, outputs=[gallery_idx])
-
-            # Nút điều hướng thủ công
+                fn=load_gallery,
+                outputs=[gallery_files, gallery_idx, gallery_img, img_label],
+            )
             prev_btn.click(
-                fn=lambda files, idx, shuf: gallery_navigate(
-                    files, idx, -1, shuf),
+                fn=lambda f, i, s: gallery_navigate(f, i, -1, s),
                 inputs=[gallery_files, gallery_idx, shuffle_chk],
-                outputs=[gallery_idx, gallery_img],
+                outputs=[gallery_idx, gallery_img, img_label],
             )
             next_btn.click(
-                fn=lambda files, idx, shuf: gallery_navigate(
-                    files, idx, 1, shuf),
+                fn=lambda f, i, s: gallery_navigate(f, i, 1, s),
                 inputs=[gallery_files, gallery_idx, shuffle_chk],
-                outputs=[gallery_idx, gallery_img],
+                outputs=[gallery_idx, gallery_img, img_label],
             )
 
-            # Autoplay bằng gr.Timer
             timer = gr.Timer(value=3, active=False)
 
-            # Bật/tắt autoplay hoặc đổi tốc độ → cập nhật timer
             autoplay_chk.change(
-                fn=lambda active, interval: gr.Timer(
-                    value=interval, active=active),
+                fn=lambda active, iv: gr.Timer(value=iv, active=active),
                 inputs=[autoplay_chk, interval_sl],
                 outputs=[timer],
             )
             interval_sl.change(
-                fn=lambda active, interval: gr.Timer(
-                    value=interval, active=active),
+                fn=lambda active, iv: gr.Timer(value=iv, active=active),
                 inputs=[autoplay_chk, interval_sl],
                 outputs=[timer],
             )
-
-            # Mỗi lần timer tick → chuyển ảnh kế tiếp (hoặc ngẫu nhiên)
             timer.tick(
-                fn=gallery_autoplay_next,
+                fn=gallery_tick,
                 inputs=[gallery_files, gallery_idx, shuffle_chk],
-                outputs=[gallery_idx, gallery_img],
+                outputs=[gallery_idx, gallery_img, img_label],
             )
 
 
 if __name__ == "__main__":
-    demo.launch(
-        inbrowser=True,
-    )
+    demo.launch(inbrowser=True)
