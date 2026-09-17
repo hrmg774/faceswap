@@ -20,6 +20,10 @@ Dự án thực hiện hoán đổi khuôn mặt (Face Swap) sử dụng thư vi
    ```bash
    pip install -r requirements.txt
    ```
+   `onnxruntime-gpu==1.30.0` được cài cùng các extra CUDA 13 và cuDNN 9
+   cần thiết cho CUDA Execution Provider. Ứng dụng sẽ preload các DLL này
+   từ các package NVIDIA trong môi trường `.venv`; không cần copy DLL vào
+   `System32` hoặc cài thêm CUDA Toolkit chỉ để chạy FaceSwap.
 
 3. Cài đặt mô hình và mã nguồn phụ:
    - Tải mô hình `inswapper_128.onnx` và đặt vào thư mục `models/`.
@@ -68,4 +72,3 @@ python inference_codeformer.py -w 0.5 -has_aligned --input_path ../output/ảnh_
 cd ..
 ```
 *(Lưu ý: Thay đổi `input_path` và `output_path` cho phù hợp với đường dẫn của bạn, tham số `-w` điều chỉnh mức độ phục hồi)*
-

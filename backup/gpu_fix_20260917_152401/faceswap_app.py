@@ -7,7 +7,6 @@ import subprocess
 import sys
 import random as _random
 import insightface
-import onnxruntime as ort
 from insightface.app import FaceAnalysis
 from utils.open_by_coccoc import open_coccoc
 from utils.rename_file import rename_by_current_time
@@ -15,13 +14,14 @@ from utils.delete_file import clear_all_files
 
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
-ort.preload_dlls()
-PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-if "CUDAExecutionProvider" not in ort.get_available_providers():
-    raise RuntimeError(
-        "ONNX Runtime CUDAExecutionProvider is unavailable. "
-        "Install the CUDA and cuDNN extras for onnxruntime-gpu."
-    )
+try:
+    import nvidia.cudnn
+    import nvidia.cuda_runtime
+
+    os.add_dll_directory(os.path.join(nvidia.cudnn.__path__[0], "bin"))
+    os.add_dll_directory(os.path.join(nvidia.cuda_runtime.__path__[0], "bin"))
+except Exception:
+    pass
 
 MODEL_PATH = r"models\inswapper_128.onnx"
 CODEFORMER = "CodeFormer"
@@ -36,17 +36,13 @@ for d in (FINAL_DIR, TEMP_DIR):
     os.makedirs(d, exist_ok=True)
 
 app = FaceAnalysis(
-    name="buffalo_l", providers=PROVIDERS
+    name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
 )
 app.prepare(ctx_id=0, det_size=(640, 640))
 
 swapper = insightface.model_zoo.get_model(
-    MODEL_PATH, providers=PROVIDERS
+    MODEL_PATH, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
 )
-if "CUDAExecutionProvider" not in swapper.session.get_providers():
-    raise RuntimeError(
-        "The inswapper ONNX session did not initialize CUDAExecutionProvider."
-    )
 
 
 # ─── FaceSwap ────────────────────────────────────────────────────────────────
