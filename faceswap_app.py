@@ -35,14 +35,10 @@ IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 for d in (FINAL_DIR, TEMP_DIR):
     os.makedirs(d, exist_ok=True)
 
-app = FaceAnalysis(
-    name="buffalo_l", providers=PROVIDERS
-)
+app = FaceAnalysis(name="buffalo_l", providers=PROVIDERS)
 app.prepare(ctx_id=0, det_size=(640, 640))
 
-swapper = insightface.model_zoo.get_model(
-    MODEL_PATH, providers=PROVIDERS
-)
+swapper = insightface.model_zoo.get_model(MODEL_PATH, providers=PROVIDERS)
 if "CUDAExecutionProvider" not in swapper.session.get_providers():
     raise RuntimeError(
         "The inswapper ONNX session did not initialize CUDAExecutionProvider."
@@ -112,13 +108,13 @@ def process_faceswap(source_img_path, target_img_path):
 
 
 # ─── Gallery ─────────────────────────────────────────────────────────────────
-def load_gallery():
-    if not os.path.isdir(FINAL_DIR):
+def load_gallery(folder_path):
+    if not os.path.isdir(folder_path):
         return [], 0, None, ""
     files = sorted(
         [
-            os.path.join(FINAL_DIR, f)
-            for f in os.listdir(FINAL_DIR)
+            os.path.join(folder_path, f)
+            for f in os.listdir(folder_path)
             if f.lower().endswith(IMAGE_EXTS)
         ]
     )
@@ -191,6 +187,12 @@ with gr.Blocks() as demo:
                         interactive=False, show_label=False, container=False
                     )
                 with gr.Column(scale=3):
+                    folder_drop = gr.Dropdown(
+                        choices=[RESTORED_DIR, FINAL_DIR, CROPPED_DIR],
+                        value=RESTORED_DIR,
+                        label="Select Folder",
+                        allow_custom_value=False,
+                    )
                     load_btn = gr.Button("Load", variant="secondary")
                     with gr.Row():
                         prev_btn = gr.Button("⬅️ Prev", size="lg")
@@ -208,6 +210,7 @@ with gr.Blocks() as demo:
 
             load_btn.click(
                 fn=load_gallery,
+                inputs=[folder_drop],
                 outputs=[gallery_files, gallery_idx, gallery_img, img_label],
             )
             prev_btn.click(
