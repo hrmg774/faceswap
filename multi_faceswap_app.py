@@ -249,6 +249,6 @@ with gr.Blocks() as demo:
 
 if __name__ == "__main__":
 
-    threading.Thread(target=open_coccoc, daemon=True).start()
+    threading.Thread(target=open_coccoc, args=("multi_faceswap",), daemon=True).start()
 
     demo.launch(inbrowser=False)
