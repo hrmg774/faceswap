@@ -51,10 +51,10 @@ if "CUDAExecutionProvider" not in swapper.session.get_providers():
 MAX_FACES = 10
 
 
-def _run_codeformer(img_path):
+def _run_codeformer(img_path, weight=1.0):
     cmd = (
         f'cd {CODEFORMER} && "{sys.executable}" inference_codeformer.py '
-        f'-w 0.5 -i "../{img_path}" -o "../{OUTPUT_DIR}" --face_upsample'
+        f'-w {weight} -i "../{img_path}" -o "../{OUTPUT_DIR}" --face_upsample'
     )
     subprocess.run(cmd, shell=True, check=True)
 
