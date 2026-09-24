@@ -14,4 +14,4 @@ temp/
 .idea/
 
 # Bỏ qua file onnx nặng (Lớn hơn 100MB)
-models/inswapper_128.onnx
+models/
