@@ -247,4 +247,4 @@ if __name__ == "__main__":
 
     threading.Thread(target=open_coccoc, args=("faceswap",), daemon=True).start()
 
-    demo.launch(inbrowser=False)
+    demo.launch(server_port=7861, inbrowser=False)
