@@ -6,6 +6,7 @@ import cv2
 import subprocess
 import sys
 import insightface
+import onnxruntime as ort
 from insightface.app import FaceAnalysis
 from utils.open_by_coccoc import open_coccoc
 from utils.rename_file import rename_by_current_time
@@ -13,14 +14,13 @@ from utils.delete_file import clear_all_files
 
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
-try:
-    import nvidia.cudnn
-    import nvidia.cuda_runtime
-
-    os.add_dll_directory(os.path.join(nvidia.cudnn.__path__[0], "bin"))
-    os.add_dll_directory(os.path.join(nvidia.cuda_runtime.__path__[0], "bin"))
-except Exception:
-    pass
+ort.preload_dlls()
+PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+if "CUDAExecutionProvider" not in ort.get_available_providers():
+    raise RuntimeError(
+        "ONNX Runtime CUDAExecutionProvider is unavailable. "
+        "Install the CUDA and cuDNN extras for onnxruntime-gpu."
+    )
 
 MODEL_PATH = r"models\inswapper_128.onnx"
 CODEFORMER = "CodeFormer"
@@ -36,21 +36,25 @@ for d in (FINAL_DIR, TEMP_DIR, CROPPED_DIR, RESTORED_DIR):
 
 # Initialize models
 app = FaceAnalysis(
-    name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+    name="buffalo_l", providers=PROVIDERS
 )
 app.prepare(ctx_id=0, det_size=(640, 640))
 
 swapper = insightface.model_zoo.get_model(
-    MODEL_PATH, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+    MODEL_PATH, providers=PROVIDERS
 )
+if "CUDAExecutionProvider" not in swapper.session.get_providers():
+    raise RuntimeError(
+        "The inswapper ONNX session did not initialize CUDAExecutionProvider."
+    )
 
 MAX_FACES = 10
 
 
-def _run_codeformer(img_path):
+def _run_codeformer(img_path, weight=1.0):
     cmd = (
         f'cd {CODEFORMER} && "{sys.executable}" inference_codeformer.py '
-        f'-w 0.5 -i "../{img_path}" -o "../{OUTPUT_DIR}" --face_upsample'
+        f'-w {weight} -i "../{img_path}" -o "../{OUTPUT_DIR}" --face_upsample'
     )
     subprocess.run(cmd, shell=True, check=True)
 
@@ -75,7 +79,8 @@ def detect_faces(src_path):
         updates = []
         for i in range(MAX_FACES):
             updates.extend(
-                [gr.update(visible=False), gr.update(value=None), gr.update(value=None)]
+                [gr.update(visible=False), gr.update(
+                    value=None), gr.update(value=None)]
             )
         return updates
 
@@ -84,7 +89,8 @@ def detect_faces(src_path):
         updates = []
         for i in range(MAX_FACES):
             updates.extend(
-                [gr.update(visible=False), gr.update(value=None), gr.update(value=None)]
+                [gr.update(visible=False), gr.update(
+                    value=None), gr.update(value=None)]
             )
         return updates
 
@@ -140,7 +146,8 @@ def execute_swap(src_path, *replace_paths):
                     # Use the largest face in the replacement image
                     repl_face = sorted(
                         repl_faces,
-                        key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+                        key=lambda f: (f.bbox[2] - f.bbox[0]) *
+                        (f.bbox[3] - f.bbox[1]),
                         reverse=True,
                     )[0]
                     result_img = swapper.get(
@@ -172,79 +179,73 @@ def execute_swap(src_path, *replace_paths):
 
 # ─── UI ───────────────────────────────────────────────────────────────────────
 with gr.Blocks() as demo:
-    gr.Markdown("# Multi-Face Swap App")
-    gr.Markdown(
-        "Thay thế từng khuôn mặt trong một bức ảnh chứa nhiều người một cách tùy chọn."
-    )
+    with gr.Tabs():
+        with gr.TabItem("Multi FaceSwap"):
+            with gr.Row():
+                with gr.Column(scale=7):
+                    result_image = gr.Image(
+                        type="filepath",
+                        label="Output",
+                        interactive=False,
+                        height=500,
+                    )
+                with gr.Column(scale=3):
+                    src_image = gr.Image(
+                        type="filepath",
+                        label="Input Data",
+                        height=250,
+                        sources=["upload"],
+                    )
+                    detect_btn = gr.Button("Detect Face", variant="secondary")
+                    swap_btn = gr.Button(
+                        "SwapFace", variant="primary", size="lg")
 
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### Bước 1: Tải ảnh gốc")
-            src_image = gr.Image(
-                type="filepath",
-                label="Ảnh gốc (Nhiều khuôn mặt)",
-                height=300,
-                sources=["upload"],
+            gr.Markdown("---")
+
+            face_rows = []
+            crop_images = []
+            replace_images = []
+
+            # Pre-create UI components for a maximum number of faces
+            for i in range(MAX_FACES):
+                with gr.Row(visible=False) as row:
+                    with gr.Column(scale=1, min_width=150):
+                        gr.Markdown(f"**Face #{i+1}**")
+                    with gr.Column(scale=3):
+                        crop = gr.Image(
+                            type="numpy",
+                            label="Input Data",
+                            interactive=False,
+                            height=150,
+                        )
+                    with gr.Column(scale=3):
+                        replace = gr.Image(
+                            type="filepath",
+                            label="Input Face",
+                            sources=["upload"],
+                            height=150,
+                        )
+
+                    face_rows.append(row)
+                    crop_images.append(crop)
+                    replace_images.append(replace)
+
+            # Bundle the updates
+            detect_outputs = []
+            for i in range(MAX_FACES):
+                detect_outputs.extend(
+                    [face_rows[i], crop_images[i], replace_images[i]])
+
+            detect_btn.click(fn=detect_faces, inputs=[
+                             src_image], outputs=detect_outputs)
+
+            swap_btn.click(
+                fn=execute_swap, inputs=[src_image] + replace_images, outputs=[result_image]
             )
-            detect_btn = gr.Button("Bước 2: Phát hiện khuôn mặt", variant="secondary")
-
-        with gr.Column(scale=1):
-            gr.Markdown("### Bước 4: Thực thi và Kết quả")
-            result_image = gr.Image(
-                type="filepath",
-                label="Kết quả cuối cùng",
-                interactive=False,
-                height=300,
-            )
-            swap_btn = gr.Button("Bắt đầu Swap", variant="primary", size="lg")
-
-    gr.Markdown("---")
-    gr.Markdown("### Bước 3: Cấu hình Swap từng khuôn mặt")
-    gr.Markdown(
-        "Các khuôn mặt phát hiện được sẽ hiển thị bên dưới. Tải lên một bức ảnh mới vào vị trí tương ứng để thay thế. Nếu để trống, khuôn mặt đó sẽ được giữ nguyên."
-    )
-
-    face_rows = []
-    crop_images = []
-    replace_images = []
-
-    # Pre-create UI components for a maximum number of faces
-    for i in range(MAX_FACES):
-        with gr.Row(visible=False) as row:
-            with gr.Column(scale=1, min_width=150):
-                gr.Markdown(f"**Khuôn mặt #{i+1}**")
-            with gr.Column(scale=2):
-                crop = gr.Image(
-                    type="numpy",
-                    label="Khuôn mặt đã cắt",
-                    interactive=False,
-                    height=150,
-                )
-            with gr.Column(scale=2):
-                replace = gr.Image(
-                    type="filepath",
-                    label="Ảnh thay thế",
-                    sources=["upload"],
-                    height=150,
-                )
-
-            face_rows.append(row)
-            crop_images.append(crop)
-            replace_images.append(replace)
-
-    # Bundle the updates
-    detect_outputs = []
-    for i in range(MAX_FACES):
-        detect_outputs.extend([face_rows[i], crop_images[i], replace_images[i]])
-
-    detect_btn.click(fn=detect_faces, inputs=[src_image], outputs=detect_outputs)
-
-    swap_btn.click(
-        fn=execute_swap, inputs=[src_image] + replace_images, outputs=[result_image]
-    )
 
 if __name__ == "__main__":
 
-    threading.Thread(target=open_coccoc, daemon=True).start()
+    threading.Thread(target=open_coccoc, args=(
+        "multi_faceswap",), daemon=True).start()
 
-    demo.launch(inbrowser=False)
+    demo.launch(server_port=7862, inbrowser=False)
