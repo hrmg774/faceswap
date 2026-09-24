@@ -15,7 +15,7 @@ def open_coccoc(url):
     url2 = "http://127.0.0.1:7862"
     url3 = "http://127.0.0.1:7863"
 
-    if url == "gallery":
+    if url == "all" or url == "gallery":
         subprocess.Popen([coccoc_path, url0])
 
     elif url == "faceswap":
