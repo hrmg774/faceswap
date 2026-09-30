@@ -11,7 +11,7 @@ OUTPUT_DIR = "output"
 FINAL_DIR = os.path.join(OUTPUT_DIR, "final_results")
 CROPPED_DIR = os.path.join(OUTPUT_DIR, "cropped_faces")
 RESTORED_DIR = os.path.join(OUTPUT_DIR, "restored_faces")
-GALLERY_DIR = r"C:\h\hrmg774\mehoa\x"
+GALLERY_DIR = r"C:\hrmg774\momhoa\x"
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp",
               ".bmp", ".mp4", ".avi", ".mov", ".mkv")
 
