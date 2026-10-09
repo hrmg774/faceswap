@@ -123,16 +123,16 @@ version_info = (1, 3, 2)
 
 ## 4. Tải model
 
-Các file model **không nằm trong git** vì quá nặng.
+Các file model **không nằm trong git** vì dung lượng lớn. Bạn cần tải chúng theo link dưới đây và đặt vào đúng thư mục:
 
-### Model bạn phải tự đặt vào
+### Model bạn phải tự tải và đặt vào
 
-| File | Đặt tại |
-|---|---|
-| `inswapper_128.onnx` | `models\inswapper_128.onnx` |
-| `codeformer.pth` | `CodeFormer\weights\CodeFormer\codeformer.pth` |
+| File | Link tải | Đặt tại |
+|---|---|---|
+| `inswapper_128.onnx` | [Tải về](https://huggingface.co/hrmg774/inswapper_128.onnx/resolve/main/inswapper_128.onnx) | `models\inswapper_128.onnx` |
+| `codeformer.pth` | [Tải về](https://huggingface.co/hrmg774/codeformer/resolve/main/codeformer.pth) | `CodeFormer\weights\CodeFormer\codeformer.pth` |
 
-Với `codeformer.pth`, có thể tải bằng script của CodeFormer:
+*(Hoặc với `codeformer.pth`, có thể tải tự động bằng script)*:
 
 ```powershell
 cd CodeFormer
