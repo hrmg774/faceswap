@@ -1,74 +1,171 @@
-# FaceSwap Project
+# FaceSwap + CodeFormer (Gradio)
 
-Dự án thực hiện hoán đổi khuôn mặt (Face Swap) sử dụng thư viện **InsightFace** (để trích xuất và ghép mặt) và **CodeFormer** (để phục hồi và tăng cường chất lượng khuôn mặt sau khi ghép).
+Ứng dụng đổi mặt chạy hoàn toàn trên máy cá nhân:
 
-## Yêu cầu hệ thống
-- Python 3.8 - 3.10
-- Khuyến nghị sử dụng GPU (NVIDIA) với CUDA để tăng tốc độ xử lý.
+1. **Đổi mặt** bằng InsightFace (`inswapper_128.onnx`) chạy qua ONNX Runtime GPU.
+2. **Làm nét mặt** bằng CodeFormer (PyTorch).
+3. Giao diện web bằng Gradio tại `http://127.0.0.1:7861`.
 
-## Cài đặt
+> Đã chạy thành công trên: Windows, Python 3.11.9, NVIDIA RTX 3050 (4 GB VRAM), driver hỗ trợ CUDA 13.x.
 
-1. Tạo môi trường ảo và kích hoạt:
-   ```bash
-   python -m venv .venv
-   ```
-   ```bash
-   .venv\Scripts\activate
-   ```
+---
 
-2. Cài đặt các thư viện từ file `requirements.txt`:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   `onnxruntime-gpu==1.30.0` được cài cùng các extra CUDA 13 và cuDNN 9
-   cần thiết cho CUDA Execution Provider. Ứng dụng sẽ preload các DLL này
-   từ các package NVIDIA trong môi trường `.venv`; không cần copy DLL vào
-   `System32` hoặc cài thêm CUDA Toolkit chỉ để chạy FaceSwap.
+## 1. Yêu cầu
 
-3. Cài đặt mô hình và mã nguồn phụ:
-   - Tải mô hình `inswapper_128.onnx` và đặt vào thư mục `models/`.
+| Thành phần | Yêu cầu |
+|---|---|
+| Hệ điều hành | Windows (code dùng đường dẫn `models\...`) |
+| Python | **3.11** (khuyến nghị 3.11.x) |
+| GPU | NVIDIA, driver mới (chạy `nvidia-smi`, dòng `CUDA Version` nên là 13.x) |
+| Dung lượng trống | khoảng 10 GB (thư viện ~5 GB, model ~1 GB) |
+| Git | để clone repo |
+| Microsoft C++ Build Tools | chỉ cần nếu `insightface` báo lỗi biên dịch khi cài |
 
-   https://huggingface.co/hrmg774/inswapper_128.onnx/blob/main/inswapper_128.onnx
+Không cần cài CUDA Toolkit riêng: thư viện CUDA/cuDNN được cài kèm qua pip (`onnxruntime-gpu[cuda,cudnn]`).
 
-   - **Cài đặt CodeFormer:**
-     Clone dự án CodeFormer vào thư mục hiện tại và cài đặt các mô hình cần thiết:
-     ```bash
-     git clone https://github.com/hrmg774/CodeFormer.git
-     cd CodeFormer
-     pip install -r requirements.txt
-     python basicsr/setup.py develop
-     python scripts/download_pretrained_models.py facelib
-     python scripts/download_pretrained_models.py CodeFormer
-     cd ..
-     ```
-   - **Cài đặt Model cho CodeFormer:**
-     https://huggingface.co/hrmg774/codeformer/blob/main/codeformer.pth
+---
 
-     Đặt file codeformer.pth vào thư mục `CodeFormer/experiments/codeformer/models/`
+## 2. Cài đặt nhanh (khuyến nghị)
 
-## Cấu trúc thư mục
+Mở **PowerShell** và chạy:
 
-- `input_face/`: Chứa ảnh gốc lấy khuôn mặt để ghép.
-- `input_data/`: Chứa ảnh đích mà bạn muốn thay thế khuôn mặt.
-- `output/`: Chứa kết quả hoán đổi khuôn mặt (bao gồm ảnh gốc và ảnh đã qua CodeFormer).
-- `models/`: Chứa các mô hình AI phục vụ hoán đổi.
-- `temp/`: Chứa file tạm trong quá trình xử lý.
-
-## Hướng dẫn sử dụng
-
-Chỉnh sửa các đường dẫn `source_path` và `target_path` trong file `faceswap.py` theo nhu cầu, sau đó chạy script:
-
-```bash
-python faceswap.py
+```powershell
+git clone https://github.com/hrmg774/faceswap.git
+cd faceswap
+Set-ExecutionPolicy -Scope Process Bypass
+.\setup.ps1
 ```
 
-### Chạy CodeFormer (Độc lập)
+Sau đó làm tiếp **mục 4 (tải model)** rồi **mục 5 (chạy app)**.
 
-Nếu bạn chỉ muốn sử dụng CodeFormer để tăng cường chất lượng khuôn mặt cho một ảnh bất kỳ, bạn có thể chạy script của CodeFormer như sau:
+### Nội dung `setup.ps1`
 
-```bash
+Nếu repo chưa có file này, tạo `setup.ps1` với nội dung sau:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip uv
+
+uv pip install -r requirements.txt --index-strategy unsafe-best-match
+
+# Gỡ bản onnxruntime CPU (insightface kéo về) để không đè bản GPU
+uv pip uninstall onnxruntime onnxruntime-gpu
+uv pip install "onnxruntime-gpu[cuda,cudnn]==1.30.0"
+
+# Tạo basicsr/version.py nếu chưa có
+$v = "CodeFormer\basicsr\version.py"
+if (-not (Test-Path $v)) {
+@"
+__version__ = '1.3.2'
+__gitsha__ = 'unknown'
+version_info = (1, 3, 2)
+"@ | Set-Content -Encoding utf8 $v
+}
+
+Write-Host "Xong. Chay app bang: python faceswap_app.py"
+```
+
+---
+
+## 3. Cài đặt thủ công (từng bước)
+
+### Bước 1. Tạo môi trường ảo
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip uv
+```
+
+Nếu PowerShell chặn script, chạy trước: `Set-ExecutionPolicy -Scope Process Bypass`.
+
+### Bước 2. Cài thư viện
+
+```powershell
+uv pip install -r requirements.txt --index-strategy unsafe-best-match
+```
+
+- Cờ `--index-strategy unsafe-best-match` là **bắt buộc** với `uv`, vì `torch` lấy từ kho PyTorch còn các gói khác lấy từ PyPI.
+- Lần đầu tải khoảng 4-5 GB (riêng `torch` ~2,5 GB), có thể mất 10-30 phút tùy mạng. `uv` có cache nên chạy lại sẽ nhanh.
+- Có thể dùng `pip install -r requirements.txt` thay cho `uv`, nhưng chậm hơn.
+
+### Bước 3. Sửa lại `onnxruntime` (quan trọng)
+
+`insightface` kéo theo bản **CPU** của `onnxruntime`, bản này đè lên bản GPU và làm mất `CUDAExecutionProvider`. Gỡ cả hai rồi chỉ cài bản GPU:
+
+```powershell
+uv pip uninstall onnxruntime onnxruntime-gpu
+uv pip install "onnxruntime-gpu[cuda,cudnn]==1.30.0"
+```
+
+Kiểm tra:
+
+```powershell
+python -c "import onnxruntime as ort; ort.preload_dlls(); print(ort.get_available_providers())"
+```
+
+Kết quả phải có `CUDAExecutionProvider`.
+
+> Không chạy `uv pip uninstall` với các gói `nvidia-*` sau bước này, vì sẽ làm mất file `cudnn64_9.dll`.
+
+### Bước 4. Tạo file `basicsr/version.py`
+
+Thư mục `CodeFormer/basicsr` cần file `version.py` (thường không có trong git). Tạo file `CodeFormer\basicsr\version.py` với nội dung:
+
+```python
+__version__ = '1.3.2'
+__gitsha__ = 'unknown'
+version_info = (1, 3, 2)
+```
+
+---
+
+## 4. Tải model
+
+Các file model **không nằm trong git** vì quá nặng.
+
+### Model bạn phải tự đặt vào
+
+| File | Đặt tại |
+|---|---|
+| `inswapper_128.onnx` | `models\inswapper_128.onnx` |
+| `codeformer.pth` | `CodeFormer\weights\CodeFormer\codeformer.pth` |
+
+Với `codeformer.pth`, có thể tải bằng script của CodeFormer:
+
+```powershell
 cd CodeFormer
-python inference_codeformer.py -w 0.5 -has_aligned --input_path ../output/ảnh_của_bạn.jpg --output_path ../output/kết_quả_codeformer/
+python scripts/download_pretrained_models.py CodeFormer
 cd ..
 ```
-*(Lưu ý: Thay đổi `input_path` và `output_path` cho phù hợp với đường dẫn của bạn, tham số `-w` điều chỉnh mức độ phục hồi)*
+
+Mẹo: nếu đã có sẵn các file này từ máy cũ, chỉ cần copy sang đúng thư mục.
+
+### Model tự tải ở lần chạy đầu
+
+| Model | Dung lượng | Lưu tại |
+|---|---|---|
+| `buffalo_l` (InsightFace) | ~300 MB | `C:\Users\<tên>\.insightface` |
+| `RealESRGAN_x2plus.pth` | 64 MB | `CodeFormer\weights\realesrgan\` |
+| `detection_Resnet50_Final.pth` | 104 MB | `CodeFormer\weights\facelib\` |
+| `parsing_parsenet.pth` | 81 MB | `CodeFormer\weights\facelib\` |
+
+Cần có mạng ở lần chạy đầu. Từ lần sau không phải tải lại, **đừng xóa thư mục `weights`**.
+
+---
+
+## 5. Chạy ứng dụng
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python faceswap_app.py
+```
+
+Mở trình duyệt tại `http://127.0.0.1:7861`:
+
+1. Tải ảnh lên **Input Face** (khuôn mặt muốn ghép vào).
+2. Tải ảnh lên **Input Data** (ảnh đích).
+3. Bấm **SwapFace**, đợi kết quả hiện ở ô Output.
+
+Ảnh kết quả cũng được lưu trong `output\final_results`.
